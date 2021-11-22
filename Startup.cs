@@ -1,11 +1,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Mime;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Catalogue.Repositories;
 using Catalogue.Settings;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.HttpsPolicy;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -36,17 +40,27 @@ namespace Catalogue
           // a singleton represents a single instance
           BsonSerializer.RegisterSerializer(new GuidSerializer(BsonType.String));
           BsonSerializer.RegisterSerializer(new DateTimeOffsetSerializer(BsonType.String));
+          var mongoDbSettings = Configuration.GetSection(nameof(MongoDbSettings)).Get<MongoDbSettings>();
+
           services.AddSingleton<IMongoClient>(ServiceProvider =>
           {
-            var settings = Configuration.GetSection(nameof(MongoDbSettings)).Get<MongoDbSettings>();
-            return new MongoClient(settings.ConnectionString);
+            return new MongoClient(mongoDbSettings.ConnectionString);
           });
           services.AddSingleton<IItemsRepository, MongoDbItemsRepository>();
-          services.AddControllers();
+          services.AddControllers(options =>
+          {
+            options.SuppressAsyncSuffixInActionNames = false;
+          });
           services.AddSwaggerGen(c =>
           {
               c.SwaggerDoc("v1", new OpenApiInfo { Title = "Catalogue", Version = "v1" });
           });
+
+          services.AddHealthChecks().AddMongoDb(
+            mongoDbSettings.ConnectionString,
+            name: "mongodb",
+            timeout: TimeSpan.FromSeconds(3),
+            tags: new[] { "ready" });
         }
 
         // This method gets called by the runtime. Use this method to configure the HTTP request pipeline.
@@ -57,9 +71,8 @@ namespace Catalogue
                 app.UseDeveloperExceptionPage();
                 app.UseSwagger();
                 app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Catalogue v1"));
+                app.UseHttpsRedirection();
             }
-
-            app.UseHttpsRedirection();
 
             app.UseRouting();
 
@@ -67,8 +80,36 @@ namespace Catalogue
 
             app.UseEndpoints(endpoints =>
             {
-                endpoints.MapControllers();
+              endpoints.MapControllers();
+
+              endpoints.MapHealthChecks("/health/ready", new HealthCheckOptions
+              {
+                Predicate = (check) => check.Tags.Contains("ready"),
+                ResponseWriter = async (context, report) =>
+                {
+                  var result = JsonSerializer.Serialize(
+                    new
+                    {
+                      status = report.Status.ToString(),
+                      checsk = report.Entries.Select(entry => new
+                      {
+                        name = entry.Key,
+                        status = entry.Value.Status.ToString(),
+                        exception = entry.Value.Exception != null ? entry.Value.Exception.Message : "no exception thrown",
+                        duration = entry.Value.Duration.ToString()
+                      })
+                    }
+                  );
+
+                  context.Response.ContentType = MediaTypeNames.Application.Json;
+                  await context.Response.WriteAsync(result);
+                }
             });
+
+            endpoints.MapHealthChecks("/health/live", new HealthCheckOptions{
+              Predicate = (_) => false
+            });
+          });
         }
     }
 }

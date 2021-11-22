@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Catalogue.entities;
 
 namespace Catalogue.Repositories
@@ -10,14 +11,14 @@ namespace Catalogue.Repositories
 	public interface IItemsRepository
 	{
     // For GET
-		Item GetItem(Guid id);
+		Task<Item> GetItemAsync(Guid id);
 
-		IEnumerable<Item> GetItems();
+		Task<IEnumerable<Item>> GetItemsAsync();
 
     // For POST
-    void CreateItem(Item item);
+    Task CreateItemAsync(Item item);
 
-    void UpdateItem(Item item);
-    void DeleteItem(Guid id);
+    Task UpdateItemAsync(Item item);
+    Task DeleteItemAsync(Guid id);
   }
 }
